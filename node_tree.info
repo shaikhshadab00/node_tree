@@ -1,0 +1,6 @@
+name = Node Tree
+description = Represent a tree structure using nodes.
+package = custom
+core = 7.x
+dependencies[] = entityreference
+dependencies[] = vl_util

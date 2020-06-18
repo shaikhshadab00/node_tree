@@ -1,0 +1,998 @@
+<?php
+/**
+ * @file
+ *
+ * - Make root tree and sub tree content type structure.
+ * - Construct sub tree node data into array from root
+ *   tree node and convert into json format for angularjs.
+ * - Display node tree structure.
+ * - Re-arrange node tree structure.
+ * - Add new child node form parent node.
+ * - Delete existing leaf node.
+ * - Update node any node in a tree.
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function node_tree_menu() {
+  $items = array();
+  $items['admin/node-tree/fields/confirm/%'] = array(
+    'title' => 'Node Tree Confirmation',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('node_tree_create_delete_tree_fields_confirm_form'),
+    'access arguments' => array('configure node tree'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['node-tree/%node'] = array(
+    'title' => 'Node Tree',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('node_tree_form', 1),
+    'access arguments' => array('view node tree'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['node-tree/node-tree-form-json-ajax/%node'] = array(
+    'title' => 'JSON Formatted Node Tree',
+    'page callback' => 'node_tree_form_json_ajax',
+    'page arguments' => array(2),
+    'type' => MENU_CALLBACK,
+    'access arguments' => array('view node tree'),
+  );
+  $items['node-tree-add-node-form-ajax'] = array(
+    'title' => 'Form to add node to tree',
+    'description' => 'Callback to get form to add node to tree.',
+    'page callback' => 'node_tree_add_node_form_ajax',
+    'access arguments' => array('configure node tree'),
+    'type' => MENU_LOCAL_TASK,
+  );
+  $items['node-tree/node-tree-save-node-ajax'] = array(
+    'title' => 'Save node to tree',
+    'description' => 'Callback to save node to tree',
+    'page callback' => 'node_tree_save_node_ajax',
+    'access arguments' => array('configure node tree'),
+    'type' => MENU_LOCAL_TASK,
+  );
+  $items['node-tree-delete-node-form-ajax'] = array(
+    'title' => 'Form to delete node from tree',
+    'description' => 'Callback to get form to delete node from tree.',
+    'page callback' => 'node_tree_delete_node_form_ajax',
+    'access arguments' => array('configure node tree'),
+    'type' => MENU_LOCAL_TASK,
+  );
+  $items['node-tree/node-tree-delete-node-ajax'] = array(
+    'title' => 'Delete node from tree',
+    'description' => 'Callback to delete node from tree',
+    'page callback' => 'node_tree_delete_node_ajax',
+    'access arguments' => array('configure node tree'),
+    'type' => MENU_LOCAL_TASK,
+  );
+  $items['node-tree/node-tree-save-tree-position-ajax'] = array(
+    'title' => 'Save tree structure',
+    'description' => 'Callback to save tree structure',
+    'page callback' => 'node_tree_save_tree_position_ajax',
+    'access arguments' => array('configure node tree'),
+    'type' => MENU_LOCAL_TASK,
+  );
+  return $items;
+} // End of node_tree_menu().
+
+/**
+ * Implements hook_permission()
+ */
+function node_tree_permission() {
+  $perms = array();
+  $perms['view node tree'] = array(
+    'title' => t('View Node Tree'),
+  );
+  $perms['configure node tree'] = array(
+    'title' => t('Configure Node Tree'),
+  );
+  return $perms;
+} // End of node_tree_permission()
+
+/**
+ * Implements hook_library().
+ */
+function node_tree_library() {
+  // Add AngularJS library.
+  $libraries['angularjs'] = array(
+    'title' => 'angularjs',
+    'version' => '1.5.9',
+    'js' => array(
+      libraries_get_path('angularjs') .'/angular.js' => array(),
+      libraries_get_path('angularjs') .'/angular-sanitize.min.js' => array(),
+      libraries_get_path('angularjs') .'/angular-route.js' => array(),
+    ),
+  );
+  // Add AngularJS Dialog Box library.
+  $libraries['ngDialog'] = array(
+    'title' => 'ngDialog',
+    'version' => '1.1.0',
+    'js' => array(
+      libraries_get_path('ngDialog') .'/js/ngDialog.min.js' => array(),
+    ),
+     'css' => array(
+      libraries_get_path('ngDialog') . '/css/ngDialog.min.css' => array(),
+      libraries_get_path('ngDialog') . '/css/ngDialog-theme-default.min.css' => array(),
+    ),
+  );
+  //Add AngularJS UI-Tree library.
+  $libraries['angular_ui_tree'] = array(
+    'title' => 'AngularJS UI Tree',
+    'version' => '2.22.5',
+    'js' => array(
+      libraries_get_path('angular-ui-tree') . '/dist/angular-ui-tree.js' => array(),
+    ),
+    'css' => array(
+      libraries_get_path('angular-ui-tree') . '/dist/angular-ui-tree.min.css' => array(),
+    ),
+  );
+  return $libraries;
+} // End of node_tree_library().
+
+/**
+ * Implements hook_theme
+ */
+function node_tree_theme() {
+  return array(
+    'node_tree' => array(
+      'template' => 'templates/node-tree',
+      'variables' => array(
+        'nid' => NULL,
+      ),
+    ),
+    'node_tree_add_node' => array(
+      'template' => 'templates/node-tree-add-node-form',
+    ),
+     'node_tree_delete_node' => array(
+      'template' => 'templates/node-tree-delete-node-form',
+    ),
+  );
+} // End of node_tree_theme().
+
+/**
+ * Implements hook_form_FORM_ID_alter
+ *
+ * - Add an option to select sub tree
+ *   content type for node tree.
+ */
+function node_tree_form_node_type_form_alter(&$form, &$form_state) {
+  // Creating a fieldset and a checkbox form for content type edit form.
+  if (empty($form['#node_type']->type)) {
+    return;
+  }
+  $form['node_tree_setting'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Node Tree Options'),
+    '#collapsible' => TRUE,
+    '#collapsed' => TRUE,
+    '#group' => 'additional_settings',
+  );
+  $content_type_option = node_type_get_names();
+  unset($content_type_option[$form['#node_type']->type]); // Remove current content type for the list.
+  $form['node_tree_setting']["{$form['#node_type']->type}_node_tree_container_setting"] = array(
+    '#title' => t('Content types which with make the node tree'),
+    '#type' => 'checkboxes',
+    '#default_value' => variable_get("{$form['#node_type']->type}_node_tree_container_setting", array()),
+    '#options' => $content_type_option,
+  );
+  $form['#submit'][] = 'node_tree_create_delete_tree_fields_submit';
+} // End of node_tree_form_node_type_form_alter
+
+/**
+ * - Custom submit function to redirect node
+ *   tree confirm form when any difference
+ *   available in node tree options.
+ */
+function node_tree_create_delete_tree_fields_submit(&$form, &$form_state) {
+  $values = $form_state['values'];
+  $tree_container_content_type = $values['type'];
+  $tree_container_setting = $values["{$tree_container_content_type}_node_tree_container_setting"];
+  variable_set("{$tree_container_content_type}_node_tree_new_container_setting", $tree_container_setting);
+  $tree_container_setting = array_filter($tree_container_setting); // Remove 0 values in new sub tree content types.
+  $old_tree_container_setting = variable_get("{$tree_container_content_type}_node_tree_container_setting", array());
+  $old_tree_container_setting = array_filter($old_tree_container_setting); // Remove 0 values in old sub_tree content types.
+
+  // If any difference available in node tree container setting then redirect to confirmation from.
+  $sub_tree_content_type_diff = array_merge(array_diff($tree_container_setting, $old_tree_container_setting), array_diff($old_tree_container_setting, $tree_container_setting));
+  if (!empty($sub_tree_content_type_diff)) {
+    $form_state['redirect'] = "admin/node-tree/fields/confirm/$tree_container_content_type";
+  }
+} // End of node_tree_create_delete_tree_fields_submit.
+
+/**
+ * - Confirmation form for node tree fields
+ * - Display list of fields which have to
+ *   create and delete.
+ */
+function node_tree_create_delete_tree_fields_confirm_form($form, &$form_state) {
+  $tree_container_content_type = arg(4);
+  if (empty($tree_container_content_type)) {
+    return;
+  }
+
+  $content_type_readable_names = node_type_get_names();
+  $tree_content_types = variable_get("{$tree_container_content_type}_node_tree_new_container_setting", array());
+  $old_tree_content_types = variable_get("{$tree_container_content_type}_node_tree_container_setting", array());
+  $old_tree_content_types = array_filter($old_tree_content_types); // Remove 0 values
+  $tree_content_types = array_filter($tree_content_types); // Remove 0 values
+
+  // Get node tree root tree field name.
+  $root_tree_field_name = node_tree_get_ref_root_tree_field_name($tree_container_content_type);
+  // Get node tree multi value sub tree field names
+  $sub_tree_field_names = array();
+  foreach ($tree_content_types as $tree_content_type) {
+    $sub_tree_field_names[$tree_content_type] = node_tree_get_ref_mv_sub_tree_field_name($tree_content_type);
+  }
+
+  $form['tree_container_content_type'] = array(
+    '#type' => 'hidden',
+    '#value' => $tree_container_content_type,
+  );
+  $form['tree_content_types'] = array(
+    '#type' => 'hidden',
+    '#value' => $tree_content_types,
+  );
+  // Display list of the check content type fields which have to create/update.
+  if (!empty($tree_content_types)) {
+    $display_create_field_names = array();
+    // Assign root tree field name to display fields list
+    $display_create_field_names[0] = "{$root_tree_field_name} field in {$content_type_readable_names[$tree_container_content_type]} content type.";
+    // Assign sub tree field names to display fields list
+    foreach ($sub_tree_field_names as $bundle => $sub_tree_field_name) {
+      $display_create_field_names[] = "{$sub_tree_field_name} field in {$content_type_readable_names[$bundle]} content type.";
+    }
+    $form['field_create_update_message'] = array(
+      '#type' => 'markup',
+      '#markup' => "Are you sure you want the following fields to be created/updated in their respective content type?",
+      '#prefix' => '<div class="field-create-update-message" style="margin:10px 0 10px 0;font-weight:bold;">',
+      '#suffix' => '</div>',
+    );
+    $form["display_create_field_names"] = array(
+      '#theme' => 'item_list',
+      '#items' => $display_create_field_names,
+      '#attributes' => array('id' => 'display-create-field-names'),
+    );
+    $form['root_tree_field_name'] = array(
+      '#type' => 'hidden',
+      '#value' => $root_tree_field_name,
+    );
+    $form['sub_tree_field_names'] = array(
+      '#type' => 'hidden',
+      '#value' => $sub_tree_field_names,
+    );
+  }
+
+  // Display list of the unchecked content type fields which have to be deleted.
+  $delete_field_names = array();
+  // Delete fields when a root tree uncheck them.
+  $tree_content_type_unchecked = array_diff_assoc($old_tree_content_types, $tree_content_types);
+  if (!empty($tree_content_type_unchecked)) {
+    // Check any sub tree content type uncheck.
+    foreach ($tree_content_type_unchecked as $tree_content_type) {
+      $sub_tree_field_name = node_tree_get_ref_mv_sub_tree_field_name($tree_content_type);
+      $sub_tree_field_exists = field_info_field($sub_tree_field_name);
+      if (!empty($sub_tree_field_exists)) {
+        $delete_field_names[$tree_content_type] = $sub_tree_field_name;
+      }
+    }
+    // If all sub tree content types are unchecked, delete root tree content type field.
+    if (empty($tree_content_types)) {
+      $root_tree_field_detail = field_info_field($root_tree_field_name);
+      if (!empty($root_tree_field_detail)) {
+        $delete_field_names[$tree_container_content_type] = $root_tree_field_name;
+      }
+    }
+  }
+
+  // Display list of the unchecked content type fields which have to be deleted.
+  if (!empty($delete_field_names)) {
+    $display_delete_field_names = array();
+    foreach ($delete_field_names as $bundle => $delete_field_name) {
+      $display_delete_field_names[] =  "{$delete_field_name} field in {$content_type_readable_names[$bundle]} content type.";
+    }
+    $form['delete_field_message'] = array(
+      '#type' => 'markup',
+      '#markup' => "Are you sure you want to delete the following fields? <span style='color:#FF0000'>You might loose some data.</span>",
+      '#prefix' => '<div class="field-delete-message" style="margin:10px 0 10px 0;font-weight:bold;">',
+      '#suffix' => '</div>',
+    );
+    $form['display_delete_field_names'] = array(
+      '#theme' => 'item_list',
+      '#items' => $display_delete_field_names,
+      '#attributes' => array('id' => 'display-delete-field-names'),
+    );
+    $form['delete_field_names'] = array(
+      '#type' => 'hidden',
+      '#value' => $delete_field_names,
+    );
+  }
+  $form['process'] = array(
+    '#type' => 'submit',
+    '#value' => t('Process'),
+    '#attributes' => array('class' => array('btn', 'btn-success'), 'style' => array('margin-top:2%')),
+    '#prefix' => '<div class="submit-buttons">'
+  );
+  $form['cancel'] = array(
+    '#type' => 'submit',
+    '#value' => t('Cancel'),
+    '#attributes' => array('class' => array('btn', 'btn-danger'), 'style' => array('margin-top:2%')),
+    '#suffix' => '</div>',
+  );
+  return $form;
+
+}// End of node_tree_create_delete_tree_fields_confirm_form()
+
+/**
+ * - Submit function of create/delete node tree
+ *   fields.
+ */
+function node_tree_create_delete_tree_fields_confirm_form_submit($form, &$form_state) {
+  $values = $form_state['values'];
+  $confirm_message = '';
+  $tree_container_content_type = $values['tree_container_content_type'];
+  $tree_content_types = $values['tree_content_types'];
+  $root_tree_field_name = $values['root_tree_field_name'];
+  $sub_tree_field_names = $values['sub_tree_field_names'];
+  $delete_field_names = $values['delete_field_names'];
+
+  if ($values['op'] == 'Process') {
+    // Delete fields if any field name present.
+    if (isset($delete_field_names)) {
+      foreach ($delete_field_names as $content_type => $field_name) {
+        field_delete_field($field_name);
+      }
+    }
+
+    // Create/update root tree fields if field names present.
+    if (isset($root_tree_field_name)) {
+      // Get root tree field label name.
+      $root_tree_field_label = node_tree_get_ref_root_tree_field_label($tree_container_content_type);
+      // Create/update new field base for node tree container content type and select entityreference as sub tree content types.
+      $root_tree_field_base = node_tree_create_entityreference_field_base($root_tree_field_name, $tree_content_types);
+      // Create new field Instance for node tree container content type if field instance is not present
+      $root_tree_field_instance = field_info_instance('node', $root_tree_field_name, $tree_container_content_type);
+      $root_tree_field_instance = empty($root_tree_field_instance) ?
+        node_tree_create_entityreference_field_instance($root_tree_field_name, $tree_container_content_type, $root_tree_field_label) :
+          $root_tree_field_instance;
+      if (empty($root_tree_field_instance)) {
+        drupal_set_message("Unable to create field instance in $tree_container_content_type content type", 'error');
+      }
+    }
+
+    // Create sub tree fields if field names present.
+    if (isset($sub_tree_field_names)) {
+      foreach ($tree_content_types as $tree_content_type) {
+        $field_exists = array_key_exists($tree_content_type, $sub_tree_field_names);
+        if ($field_exists == 1) {
+          $sub_tree_field_name = $sub_tree_field_names[$tree_content_type];
+          $tree_reference = array($tree_content_type => $tree_content_type);
+          // Get sub tree field label.
+          $sub_tree_field_label = node_tree_get_ref_mv_sub_tree_field_label($tree_content_type);
+          // Create New entityreference field base for tree content type.
+          // -1 for unlimited number of values
+          $sub_tree_field_base = node_tree_create_entityreference_field_base($sub_tree_field_name, $tree_reference, -1);
+          // Create New sub tree field Instance if field instance is not present
+          $sub_tree_field_instance = field_info_instance('node', $sub_tree_field_name, $tree_content_type);
+          $sub_tree_field_instance = empty($sub_tree_field_instance) ?
+            node_tree_create_entityreference_field_instance($sub_tree_field_name, $tree_content_type, $sub_tree_field_label) :
+              $sub_tree_field_instance;
+          if (empty($sub_tree_field_instance)) {
+            drupal_set_message("Unable to create field instance in $tree_content_type content type", 'error');
+          }
+        }
+      }
+    }
+    $message = t("Successfuly processed node tree field confirmation for {$tree_container_content_type} content type");
+    variable_set("{$tree_container_content_type}_node_tree_container_setting", $tree_content_types); // Store sub tree tree setting
+  }
+  else {
+    $message = t("Unable to process node tree field confirmation for {$tree_container_content_type} content type");
+  }
+  drupal_set_message($message, 'status');
+  $form_state['redirect'] = 'admin/structure/types';
+} // End of node_tree_create_delete_tree_fields_confirm_form_submit()
+
+/**
+ * - Helper function to get root tree field
+ *   name
+ *
+ * @param $bundle
+ *  Name of the content type.
+ *
+ * @return $root_tree_field_name
+ *  Node tree root field name.
+ */
+function node_tree_get_ref_root_tree_field_name($bundle) {
+  if (empty($bundle)) {
+    return;
+  }
+  // Short field name because field name accept limited characters.
+  $tree_container_bundle = strlen($bundle) <= 8 ? $bundle : substr($bundle, 0, 8);
+  $root_tree_field_name = 'field_' . $tree_container_bundle . '_root_tree_ref';
+  return $root_tree_field_name;
+} // End of node_tree_get_ref_root_tree_field_name().
+
+/**
+ * - Helper function to get root tree field
+ *   label.
+ *
+ * @param $bundle
+ *  Name of the content type.
+ *
+ * @return $root_tree_field_label.
+ *  Node tree root field label.
+ */
+function node_tree_get_ref_root_tree_field_label($bundle) {
+  if (empty($bundle)) {
+    return;
+  }
+  // Get all content type names
+  $content_type_readable_names = node_type_get_names();
+  $root_tree_field_label = $content_type_readable_names[$bundle] . ' ' . 'root tree ref';
+  return $root_tree_field_label;
+} // End of node_tree_get_ref_root_tree_field_label().
+
+/**
+ * - Helper function to get sub tree field
+ *   name
+ *
+ * @param $bundle
+ *  Name of the content type.
+ *
+ * @return $sub_tree_field_name
+ *  Node tree sub tree field name.
+ */
+function node_tree_get_ref_mv_sub_tree_field_name($bundle) {
+  if (empty($bundle)) {
+    return;
+  }
+  // Short field name because field name accept limited characters.
+  $sub_tree_bundle = strlen($bundle) <= 5 ? $bundle : substr($bundle, 0, 5);
+  $sub_tree_field_name = 'field_' . $sub_tree_bundle . '_sub_tree_ref_mv';
+  return $sub_tree_field_name;
+} // End of node_tree_get_ref_mv_sub_tree_field_name().
+
+/**
+ * - Helper function to get sub tree field
+ *   label
+ *
+ * @param $bundle
+ *  Name of the content type.
+ *
+ * @return $sub_tree_field_label
+ *  Node tree sub tree field label.
+ */
+function node_tree_get_ref_mv_sub_tree_field_label($bundle) {
+  if (empty($bundle)) {
+    return;
+  }
+  // Get all content type names
+  $content_type_readable_names = node_type_get_names();
+  $sub_tree_field_label = $content_type_readable_names[$bundle] . ' ' . 'sub tree ref MV';
+  return $sub_tree_field_label;
+} // End of node_tree_get_ref_mv_sub_tree_field_label().
+
+/**
+ * - Helper function to create field
+ *   base for entityreference field.
+ *
+ * @param $field_name
+ *   Name of the field.
+ *
+ * @param $reference
+ *  Array of content type name.
+ *
+ * @param $cardinality_limit
+ *  Limit of the values
+ *
+ * @return $field_base
+ *  Return array of field base
+ *
+ */
+function node_tree_create_entityreference_field_base($field_name, $reference, $cardinality_limit = 1) {
+  $field_base = array();
+  if (empty($field_name)) {
+    return $field_base;
+  }
+  // field_base for entity reference field.
+  $entityreference_field_base = array(
+    'active' => 1,
+    'cardinality' => $cardinality_limit,
+    'deleted' => 0,
+    'entity_types' => array(),
+    'field_name' => $field_name,
+    'indexes' => array(
+      'target_id' => array(
+        0 => 'target_id',
+      ),
+    ),
+    'locked' => 0,
+    'module' => 'entityreference',
+    'settings' => array(
+      'handler' => 'base',
+      'handler_settings' => array(
+        'behaviors' => array(
+          'views-select-list' => array(
+            'status' => 0,
+          ),
+        ),
+        'sort' => array(
+          'type' => 'none',
+        ),
+        'target_bundles' => $reference,
+      ),
+      'target_type' => 'node',
+    ),
+    'translatable' => 0,
+    'type' => 'entityreference',
+  );
+  $entityreference_field_detail = field_info_field($field_name);
+  $field_base = empty($entityreference_field_detail) ?
+    field_create_field($entityreference_field_base) : field_update_field($entityreference_field_base);
+  return $field_base;
+} // End of node_tree_create_entityreference_field_base().
+
+/**
+ * - Helper function to create instance
+ *   of the entityreference field.
+ *
+ * @param $field_name
+ *  Name of the field.
+ *
+ * @param $bundle
+ *  Name of the content type.
+ *
+ * @return $field_instance
+ *  Return array of field instance
+ *
+ */
+function node_tree_create_entityreference_field_instance($field_name, $bundle, $field_label) {
+  $field_instance = array();
+  if (empty($field_name) || empty($bundle) || empty($field_label)) {
+    return $field_instance;
+  }
+  $entityreference_field_instance = array(
+    'bundle' => $bundle,
+    'default_value' => NULL,
+    'deleted' => 0,
+    'description' => '',
+    'display' => array(
+      'default' => array(
+        'label' => 'above',
+        'module' => 'entityreference',
+        'settings' => array(
+          'bypass_access' => FALSE,
+          'link' => FALSE,
+        ),
+        'type' => 'entityreference_label',
+        'weight' => 0,
+      ),
+      'nodeorder' => array(
+        'label' => 'above',
+        'settings' => array(),
+        'type' => 'hidden',
+        'weight' => 0,
+      ),
+      'teaser' => array(
+        'label' => 'above',
+        'settings' => array(),
+        'type' => 'hidden',
+        'weight' => 0,
+      ),
+    ),
+    'entity_type' => 'node',
+    'field_name' => $field_name,
+    'label' => $field_label,
+    'required' => 0,
+    'settings' => array(
+      'user_register_form' => FALSE,
+    ),
+    'widget' => array(
+      'active' => 1,
+      'module' => 'entityreference',
+      'settings' => array(
+        'match_operator' => 'CONTAINS',
+        'path' => '',
+        'size' => 60,
+      ),
+      'type' => 'entityreference_autocomplete',
+      'weight' => 31,
+    ),
+  );
+  $field_instance = field_create_instance($entityreference_field_instance);
+
+  return $field_instance;
+} // End of node_tree_create_entityreference_field_instance().
+
+/**
+ * - Node tree Callback function to
+ *   display tree.
+ *
+ * - Display tree structure from
+ *   node tree container.
+ *
+ * @param $tree_container_node
+ *   tree container node object
+ *
+ */
+function node_tree_form($form, &$form_state, $tree_container_node) {
+  // Add Library on angularjs_tree_page_form.
+  drupal_add_library('node_tree', 'angularjs');
+  drupal_add_library('node_tree', 'angular_ui_tree');
+  drupal_add_library('node_tree', 'ngDialog');
+  // Add custom JS and CSS file.
+  $path = drupal_get_path('module', 'node_tree');
+  drupal_add_js($path . '/js/node_tree.js');
+  drupal_add_css($path . '/css/node_tree.css');
+
+  $tree_container_nid = !empty($tree_container_node) ? $tree_container_node->nid : '';
+  $form['tree_container_nid'] = array(
+    '#type' => 'hidden',
+    '#attributes' => array('id' => 'tree-container-nid'),
+    '#value' => $tree_container_nid,
+  );
+  // Display tree if available with following combination after form submission.
+  $form['node_json_tree'] = array(
+    '#markup' => theme('node_tree'),
+  );
+  return $form;
+} // End of node_tree_form().
+
+/**
+ * - Page callback to generate json
+ *   formatted tree for a given
+ *   container nid.
+ *
+ * @param $tree_container_node
+ *   tree container node object
+ *
+ */
+function node_tree_form_json_ajax($tree_container_node) {
+  $tree_container_nid = !empty($tree_container_node) ? $tree_container_node->nid : '';
+  // Nested array of node details array.
+  $tree_struct = !empty($tree_container_nid) ? node_tree_build_node_hierarchy($tree_container_nid) : array();
+  // Return json formatted array of a node.
+  drupal_json_output($tree_struct);
+} // End of node_tree_form_json_ajax().
+
+/**
+ * Helper function to generate the tree structure in an array.
+ *
+ * @param $tree_container_nid
+ *   node tree container nid
+ *
+ * @return $tree_struct
+ *   tree node hierarchy
+ */
+function node_tree_build_node_hierarchy($tree_container_nid) {
+  $tree_data = array();
+  $tree_struct = array();
+
+  if (!empty($tree_container_nid)) {
+    $tree_container_node = node_load($tree_container_nid);
+    // Get root tree field name from tree container node.
+    $root_tree_field_name = node_tree_get_ref_root_tree_field_name($tree_container_node->type);
+    // Get nid of root tree from tree container node.
+    $root_nid = isset($tree_container_node->{$root_tree_field_name}[LANGUAGE_NONE]) ?
+      $tree_container_node->{$root_tree_field_name}[LANGUAGE_NONE][0]['target_id'] : '';
+    if (!empty($root_nid)) {
+      $root_node = node_load($root_nid);
+      $sub_tree_field_name = node_tree_get_ref_mv_sub_tree_field_name($root_node->type);
+
+      // Check availibility of root tree node.
+      if (!empty($root_node)) {
+        // Generate tree data
+        $tree_data['nid'] = $root_nid;
+        $tree_data['pnid'] = '';
+        $tree_data['depth'] = 0;
+        $tree_data['title'] = $root_node->title;
+        $tree_data['type'] = $root_node->type;
+        $tree_data['root_tree_field_name'] = $root_tree_field_name;
+        $tree_data['sub_tree_field_name'] = $sub_tree_field_name;
+        $tree_data['nodes'] = array();
+        $children_nids = node_tree_get_children_nids($root_nid);
+        // Check whether sub tree nides is present or not.
+        if (!empty($children_nids)) {
+          // Get sub tree nodes detail by using Recursive function.
+          $tree_data['nodes'] = node_tree_get_sub_tree_node_details($root_nid);
+        }
+      }
+    }
+  }
+  $tree_struct['nodes'] = $tree_data;
+  // Return nested array of nodes.
+  return $tree_struct;
+} // End of node_tree_build_node_hierarchy().
+
+/**
+ * Helper function to get children tree nids.
+ *
+ * @param $parent_nid
+ *  The nid of the parent node.
+ *
+ * @result
+ *  return children nodes nids.
+ */
+function node_tree_get_children_nids($parent_nid) {
+  // Initialize children nids as empty array
+  $children_nids = array();
+  if (empty($parent_nid)) {
+    return $children_nids;
+  }
+  $parent_node = node_load($parent_nid);
+  // Get children tree field name form parent node content type.
+  $children_field_name = node_tree_get_ref_mv_sub_tree_field_name($parent_node->type);
+  if (!empty($parent_node->{$children_field_name}[LANGUAGE_NONE])) {
+    $child_node_details = $parent_node->{$children_field_name}[LANGUAGE_NONE];
+    foreach ($child_node_details as $child_node_key => $child_node_value) {
+      $children_nids[$child_node_key] = $child_node_value['target_id'];
+    }
+  }
+  // Sort children nids by key.
+  ksort($children_nids);
+  return $children_nids;
+} // node_tree_get_children_nids().
+
+/**
+ * Helper function to give array of sub tree node based
+ * on parent nid.
+ *
+ * @param $parent_nid
+ *  The nid of the parent node.
+ *
+ * @param $depth
+ *  Depth of node tree.
+ *
+ * @return tree_data
+ *  Return nested Array for storing sub tree node detail.
+ */
+function node_tree_get_sub_tree_node_details($parent_nid, $depth = 1) {
+  $sub_tree_data = array();
+  if (!empty($parent_nid)) {
+    $children_nids = node_tree_get_children_nids($parent_nid);
+    foreach ($children_nids as $child_nid) {
+      $child_node = node_load($child_nid);
+      // Get field name of the sub tree.
+      $sub_tree_field_name = node_tree_get_ref_mv_sub_tree_field_name($child_node->type);
+      // Check availibility of child node.
+      if (!empty($child_node)) {
+        // Assign child node value in array.
+        $tree_node_data = array(
+          'nid' => $child_nid,
+          'pnid' => $parent_nid,
+          'depth' => $depth,
+          'title' => $child_node->title,
+          'type' => $child_node->type,
+          'sub_tree_field_name' => $sub_tree_field_name,
+          'nodes' => array(),
+        );
+        // Get sub child nids
+        $sub_children_nids = node_tree_get_children_nids($child_nid);
+        if (!empty($sub_children_nids)) {
+          // Get sub child nodes detail by using Recursive function.
+          $sub_child_depth = $depth + 1;
+          $tree_node_data['nodes'] = node_tree_get_sub_tree_node_details($child_nid, $sub_child_depth);
+        }
+        $sub_tree_data[] = $tree_node_data;
+      }
+    }
+  }
+  return $sub_tree_data;
+} // End of node_tree_get_sub_tree_node_details().
+
+/**
+ * Helper function to get node add form theme template.
+ */
+function node_tree_add_node_form_ajax() {
+  drupal_json_output(theme('node_tree_add_node'));
+} // End of node_tree_add_node_form_ajax().
+
+/**
+ * Ajax callback function to add new child node.
+ */
+function node_tree_save_node_ajax() {
+  // Get input from UI using Ajax post method and decode them.
+  $update_node_data = file_get_contents('php://input');
+  // Decode JSON input data.
+  $node_data = json_decode($update_node_data);
+  // Get node details from node data.
+  $parent_nid = isset($node_data->pnid) ? $node_data->pnid : '';
+  $child_node_title = isset($node_data->title) ? $node_data->title : '';
+  $child_node_type = isset($node_data->type) ? $node_data->type : '';
+  $root_tree_field_name = isset($node_data->rootTreeFieldName) ? $node_data->rootTreeFieldName : '';
+  $sub_tree_field_name = isset($node_data->subTreeFieldName) ? $node_data->subTreeFieldName : '';
+
+  $ajax_output = "Error on Node Add!";
+  // Exit when node type empty
+  if (empty($child_node_type)) {
+    drupal_json_output($ajax_output);
+    return;
+  }
+  if (!empty($child_node_title) && !empty($parent_nid)) {
+    // Create new child node.
+    $child_node = vl_util_create_skeleton_node($child_node_type);
+    $child_node->title = $child_node_title;
+    node_save($child_node);
+    //Update reference of new child nid in parent node.
+    $child_nid = $child_node->nid;
+    $parent_node = node_load($parent_nid);
+    // Get number of children nodes parsent in parent node.
+    $number_of_children = isset($parent_node->{$sub_tree_field_name}[LANGUAGE_NONE]) ? $parent_node->{$sub_tree_field_name}[LANGUAGE_NONE] : '';
+    // Increment number of child node position to get last on array.
+    $child_tree_position = (count($number_of_children) > 0) ? count($number_of_children) : 0;
+    $parent_node->{$sub_tree_field_name}[LANGUAGE_NONE][$child_tree_position]['target_id'] = $child_nid;
+    node_save($parent_node);
+    $ajax_output = "Node Added!";
+  }
+  drupal_json_output($ajax_output);
+} // End of node_tree_save_node_ajax().
+
+/**
+ * Helper function to get node delete form theme template.
+ */
+function node_tree_delete_node_form_ajax() {
+  drupal_json_output(theme('node_tree_delete_node'));
+} // End of node_tree_delete_node_form_ajax().
+
+/**
+ * Ajax callback to delete leaf node.
+ */
+function node_tree_delete_node_ajax() {
+  $ajax_output = 'Not able to delete.';
+  // Get input from UI using Ajax post method and decode them.
+  $update_node_data = file_get_contents('php://input');
+  $node_data = json_decode($update_node_data);
+
+  // Get node details from node data.
+  $leaf_nid = isset($node_data->nid) ? $node_data->nid : '';
+  $parent_nid = isset($node_data->pnid) ? $node_data->pnid : '';
+  $leaf_node_type = isset($node_data->type) ? $node_data->type : '';
+  $root_tree_field_name = isset($node_data->rootTreeFieldName) ? $node_data->rootTreeFieldName : '';
+  $sub_tree_field_name = isset($node_data->subTreeFieldName) ? $node_data->subTreeFieldName : '';
+
+  // Delete leaf tree node and update parent tree field.
+  if (!empty($leaf_nid) && !empty($parent_nid)) {
+    $parent_node = node_load($parent_nid);
+    if (!empty($parent_node->{$sub_tree_field_name}[LANGUAGE_NONE])) {
+      // Get number of children present in parent node.
+      $number_of_children = $parent_node->{$sub_tree_field_name}[LANGUAGE_NONE];
+      foreach ($number_of_children as $child_tree_position => $child_target_id) {
+        $child_tree_target_id = $child_target_id['target_id'];
+        if ($child_tree_target_id == $leaf_nid) {
+          // Unset leaf tree node position form parent reference.
+          unset($parent_node->{$sub_tree_field_name}[LANGUAGE_NONE][$child_tree_position]);
+          node_save($parent_node);
+          node_delete($leaf_nid);
+          $ajax_output = 'deleted';
+        }
+      }
+    }
+  }
+  elseif (!empty($leaf_nid)) {
+    // Delete root tree node and update tree container node field.
+    $root_nid = $leaf_nid; // Last leaf tree node become root tree node of the tree.
+    $tree_container_nid = node_tree_get_tree_container_nid($root_nid, $root_tree_field_name); // get tree container nid.
+    if (!empty($root_nid)) {
+      // Load and unset node tree container.
+      $tree_container_node = node_load($tree_container_nid);
+      unset($tree_container_node->{$root_tree_field_name}[LANGUAGE_NONE]);
+      node_save($tree_container_node);
+    }
+    node_delete($root_nid);
+    $ajax_output = 'deleted';
+  }
+  drupal_json_output($ajax_output);
+} // End of node_tree_delete_node_ajax().
+
+/**
+ * Helper function to Get tree container nid.
+ *
+ * @param root_tree_nid
+ *  Nid of root tree node.
+ *
+ * @param root_tree_field_name
+ *  Field name of root tree node.
+ *
+ * @return root_container_nid
+ *  Nid of tree container.
+ */
+function node_tree_get_tree_container_nid($root_nid, $root_tree_field_name) {
+  if (empty($root_nid) || empty($root_tree_field_name)) {
+    return '';
+  }
+  $query = db_select('node', 'n');
+  $query->join('field_data_' . $root_tree_field_name, 'fdfn', 'fdfn.revision_id = n.vid');
+  $query->fields('n', array('nid'));
+  $query->condition('fdfn.' . $root_tree_field_name . '_target_id', $root_nid);
+  $tree_container_nid = $query->execute()->fetchfield();
+
+  return $tree_container_nid;
+} // End of node_tree_get_tree_container_nid.
+
+/**
+ * Ajax callback function to save tree format
+ * based on node tree array position.
+ */
+function node_tree_save_tree_position_ajax() {
+  // Get ajax user input.
+  $save_node_tree = file_get_contents('php://input');
+  // Decode json formatted data.
+  $node_json_tree = json_decode($save_node_tree);
+  /**
+   * Tree container should hold only one root node.
+   * Error if more than one root node present
+   * in a tree structure.
+   */
+  if (array_key_exists(1, $node_json_tree->nodes)) {
+    drupal_set_message('Only one root node is allowed in the tree.', 'error');
+    return;
+  }
+  /**
+   * First remove old tree positions then
+   * set new position in the tree.
+   */
+  // Get root tree node detail.
+  $tree = $node_json_tree->nodes[0];
+  $sub_tree_field_name = $tree->sub_tree_field_name;
+  $root_tree_field_name = $tree->root_tree_field_name;
+  $root_nid = $tree->nid;
+  $root_node = node_load($root_nid);
+  if (!empty($root_node->{$sub_tree_field_name}[LANGUAGE_NONE])) {
+    // Unset sub tree references form root node.
+    unset($root_node->{$sub_tree_field_name}[LANGUAGE_NONE]);
+  }
+  // Save and load again sub tree node.
+  node_save($root_node);
+  $root_node = node_load($root_nid);
+  // Check and Set new references of a 1st level of the tree in the root node.
+  if (!empty($tree->nodes)) {
+    foreach ($tree->nodes as $position => $node_data) {
+      $root_node->{$sub_tree_field_name}[LANGUAGE_NONE][$position]['target_id'] = $node_data->nid;
+    }
+    node_save($root_node);
+    // Updating position for child tree nodes.
+    foreach ($tree->nodes as $position => $node_data) {
+      node_tree_update_child_tree_position($node_data, $sub_tree_field_name);
+    }
+  }
+  // Success message of position update.
+  drupal_set_message("Node tree position updated successfully.");
+} // End of node_tree_save_tree_position_ajax().
+
+/**
+ * Recursive helper function for update sub tree nodes
+ * position.
+ *
+ * @param $sub_tree_data
+ *  array of sub tree nodes.
+ *
+ * @param $sub_tree_field_name
+ *  The field name of the sub tree reference.
+ *
+ * @result
+ *  Update sub tree nodes position.
+ */
+function node_tree_update_child_tree_position($sub_tree_data, $sub_tree_field_name) {
+  // Get nid of the parent tree node of a sub tree.
+  $parent_nid = $sub_tree_data->nid;
+  // Loading parent tree node.
+  $parent_node = node_load($parent_nid);
+  if (!empty($parent_node->{$sub_tree_field_name}[LANGUAGE_NONE])) {
+    // Unset sub tree references form parent node.
+    unset($parent_node->{$sub_tree_field_name}[LANGUAGE_NONE]);
+  }
+  node_save($parent_node);
+  $parent_node = node_load($parent_nid);
+  if (!empty($sub_tree_data->nodes)) {
+    // Check and Set new references of a 1st level of the tree in the parent node.
+    foreach ($sub_tree_data->nodes as $position => $node_data) {
+      $parent_node->{$sub_tree_field_name}[LANGUAGE_NONE][$position]['target_id'] = $node_data->nid;
+    }
+    node_save($parent_node);
+    // Call same function recursively for updating position for child tree nodes.
+    foreach ($sub_tree_data->nodes as $position => $node_data) {
+      node_tree_update_child_tree_position($node_data, $sub_tree_field_name);
+    }
+  }
+} // End of node_tree_update_child_tree_nodes().
